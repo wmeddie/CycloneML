@@ -32,6 +32,7 @@ import org.apache.spark.mllib.util.{LocalClusterSparkContext, MLlibTestSparkCont
 import org.apache.spark.mllib.util.TestingUtils._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
+import org.bytedeco.frovedis.frovedis_server
 
 
 object LogisticRegressionSuite {
@@ -178,6 +179,7 @@ class LogisticRegressionSuite extends SparkFunSuite with MLlibTestSparkContext w
 
   override def beforeAll(): Unit = {
     super.beforeAll()
+    frovedis_server.initialize("-np 1")
     /*
        Here is the instruction describing how to export the test data into CSV format
        so we can validate the training accuracy compared with R's glmnet package.

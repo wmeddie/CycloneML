@@ -226,6 +226,61 @@ class LogisticRegressionWithSGD private[mllib] (
   override protected[mllib] def createModel(weights: Vector, intercept: Double) = {
     new LogisticRegressionModel(weights, intercept)
   }
+
+  override def run(input: RDD[LabeledPoint], initialWeights: Vector):
+      LogisticRegressionModel = {
+    def runWithMlLogisticRegression(elasticNetParam: Double) = {
+
+      val model = new com.nec.frovedis.mllib.classification.LogisticRegression()
+          .setMaxIter(optimizer.numIterations)
+          .setStepSize(optimizer.stepSize)
+//          .setHistSize(optimizer.numCorrections)
+          .setRegParam(scala.math.max(1E-6, optimizer.regParam))
+          .setSolver("sgd")
+          .setElasticNetParam(elasticNetParam)
+          .setTol(scala.math.max(1E-6, optimizer.convergenceTol))
+          .setFitIntercept(addIntercept)
+          .setMiniBatchFraction(optimizer.miniBatchFraction)
+          .fit(input, initialWeights.toArray)
+
+      new LogisticRegressionModel(new DenseVector(Array[Double]()), 0, 0, 0) {
+        override def setThreshold(threshold: Double): this.type = {
+          model.setThreshold(threshold)
+          this
+        }
+
+        override def getThreshold: Option[Double] = {
+          if (model.getThreshold == com.nec.frovedis.matrix.ENUM.NONE) None else Option(model.getThreshold)
+        }
+
+        override def clearThreshold(): this.type = {
+          model.clearThreshold
+          this
+        }
+
+        override def predict(testData: RDD[Vector]): RDD[Double] = {
+          model.predict(testData)
+        }
+
+        override def predict(testData: Vector): Double = {
+          model.predict(testData)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    }
+    updater match {
+      case x: SquaredL2Updater => runWithMlLogisticRegression(0.0)
+      case x: L1Updater => runWithMlLogisticRegression(1.0)
+      case _ => super.run(input, initialWeights)
+    }
+  }
 }
 
 /**
@@ -320,7 +375,57 @@ class LogisticRegressionWithLBFGS
       LogisticRegressionModel = {
     // ml's Logistic regression only supports binary classification currently.
     if (numOfLinearPredictor == 1) {
-      def runWithMlLogisticRegression(elasticNetParam: Double) = {
+      def runWithMlLogisticRegression(elasticNetParam: Double): LogisticRegressionModel = {
+        try {
+          val model = new com.nec.frovedis.mllib.classification.LogisticRegression()
+              .setMaxIter(optimizer.getNumIterations)
+//              .setStepSize(optimizer.getStepSize)
+//              .setHistSize(optimizer.getNumCorrections)
+              .setRegParam(scala.math.max(1E-6, optimizer.getRegParam))
+              .setSolver("lbfgs")
+              .setElasticNetParam(elasticNetParam)
+              .setTol(scala.math.max(1E-6, optimizer.getConvergenceTol))
+              .setFitIntercept(addIntercept)
+//              .setMiniBatchFraction(optimizer.getMiniBatchFraction)
+              .fit(input, initialWeights.toArray)
+
+          return new LogisticRegressionModel(new DenseVector(Array[Double]()), 0, 0, 0) {
+            override def setThreshold(threshold: Double): this.type = {
+              model.setThreshold(threshold)
+              this
+            }
+
+            override def getThreshold: Option[Double] = {
+              if (model.getThreshold == com.nec.frovedis.matrix.ENUM.NONE) None else Option(model.getThreshold)
+            }
+
+            override def clearThreshold(): this.type = {
+              model.clearThreshold
+              this
+            }
+
+            override def predict(testData: RDD[Vector]): RDD[Double] = {
+              testData.mapPartitions { iter =>
+                iter.map(v => model.predict(v))
+              }
+            }
+
+            override def predict(testData: Vector): Double = {
+              model.predict(testData)
+            }
+
+            override def save(sc: SparkContext, path: String): Unit = {
+              model.save(path)
+            }
+
+            override def toString: String = {
+              model.toString
+            }
+          }
+        } catch {
+          case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+        }
+
         // Prepare the ml LogisticRegression based on our settings
         val lr = new org.apache.spark.ml.classification.LogisticRegression()
         lr.setRegParam(optimizer.getRegParam())

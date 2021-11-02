@@ -34,11 +34,11 @@ import org.apache.spark.rdd.RDD
 class GradientDescent private[spark] (private var gradient: Gradient, private var updater: Updater)
   extends Optimizer with Logging {
 
-  private var stepSize: Double = 1.0
-  private var numIterations: Int = 100
-  private var regParam: Double = 0.0
-  private var miniBatchFraction: Double = 1.0
-  private var convergenceTol: Double = 0.001
+  var stepSize: Double = 1.0
+  var numIterations: Int = 100
+  var regParam: Double = 0.0
+  var miniBatchFraction: Double = 1.0
+  var convergenceTol: Double = 0.001
 
   /**
    * Set the initial step size of SGD for the first step. Default 1.0.
