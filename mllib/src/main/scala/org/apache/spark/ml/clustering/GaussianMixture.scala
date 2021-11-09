@@ -32,6 +32,8 @@ import org.apache.spark.ml.util._
 import org.apache.spark.ml.util.Instrumentation.instrumented
 import org.apache.spark.mllib.linalg.{Matrices => OldMatrices, Matrix => OldMatrix,
   Vector => OldVector, Vectors => OldVectors}
+import org.apache.spark.mllib.linalg.MatrixImplicits._
+import org.apache.spark.mllib.linalg.VectorImplicits._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions._
@@ -376,6 +378,38 @@ class GaussianMixture @Since("2.0.0") (
 
   @Since("2.0.0")
   override def fit(dataset: Dataset[_]): GaussianMixtureModel = instrumented { instr =>
+    try {
+      val data = DatasetUtils.columnToOldVector(dataset, getFeaturesCol)
+      val model = new com.nec.frovedis.mllib.clustering.GaussianMixture(
+        $(k), "full", $(tol), $(maxIter), "random", $(seed)).run(data)
+
+      return copyValues(new GaussianMixtureModel(uid, model.weights,
+          model.gaussians.map(g => new MultivariateGaussian(g.mu, g.sigma))) {
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val features = DatasetUtils.columnToOldVector(dataset, getFeaturesCol)
+          val predictions = model.predict(features)
+
+          features.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, ((feature, _), (prediction, _))) => (feature, prediction)
+          }.toDF($(featuresCol), $(predictionCol))
+        }
+
+        override def predict(features: Vector): Int = {
+          model.predict(features)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }).setParent(this)
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     transformSchema(dataset.schema, logging = true)
 
     val spark = dataset.sparkSession

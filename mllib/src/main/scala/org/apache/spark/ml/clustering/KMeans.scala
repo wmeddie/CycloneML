@@ -327,6 +327,37 @@ class KMeans @Since("1.5.0") (
 
   @Since("2.0.0")
   override def fit(dataset: Dataset[_]): KMeansModel = instrumented { instr =>
+    try {
+      val data = DatasetUtils.columnToOldVector(dataset, getFeaturesCol)
+      val model = com.nec.frovedis.mllib.clustering.KMeans.train(
+        data, $(k), $(maxIter), $(seed), $(tol), false)
+
+      return new KMeansModel(uid, null) {
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val features = DatasetUtils.columnToOldVector(dataset, getFeaturesCol)
+          val predictions = model.predict(features)
+
+          features.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, ((feature, _), (prediction, _))) => (feature, prediction)
+          }.toDF($(featuresCol), $(predictionCol))
+        }
+
+        override def predict(features: Vector): Int = {
+          model.predict(features)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     transformSchema(dataset.schema, logging = true)
 
     instr.logPipelineStage(this)
