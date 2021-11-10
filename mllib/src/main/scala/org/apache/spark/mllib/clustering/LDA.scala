@@ -21,10 +21,12 @@ import java.util.Locale
 
 import breeze.linalg.{DenseVector => BDV}
 
+import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaPairRDD
 import org.apache.spark.graphx._
 import org.apache.spark.internal.Logging
+import org.apache.spark.mllib.linalg.Matrix
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
@@ -322,6 +324,54 @@ class LDA private (
    */
   @Since("1.3.0")
   def run(documents: RDD[(Long, Vector)]): LDAModel = {
+    try {
+      val pattern = "(.*)LDAOptimizer".r
+      val pattern(optimizerName) = ldaOptimizer.getClass.getSimpleName
+      val model = new com.nec.frovedis.mllib.clustering.LDA(k, maxIterations,
+        docConcentration, topicConcentration, seed, checkpointInterval,
+        optimizerName.toLowerCase(Locale.ROOT), 0, 0, "original").run(documents)
+
+      return new LDAModel() {
+        override def k: Int =  LDA.this.k
+
+        override def vocabSize: Int = model.vocabSize
+
+        override def docConcentration: Vector = LDA.this.docConcentration
+
+        override def topicConcentration: Double = LDA.this.topicConcentration
+
+        override protected def gammaShape: Double = 0
+
+        override def topicsMatrix: Matrix = model.topicsMatrix
+
+        override def describeTopics(maxTermsPerTopic: Int): Array[(Array[Int], Array[Double])] = {
+          model.describeTopics(maxTermsPerTopic)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        def logLikelihood(documents: RDD[(Long, Vector)]): Double = {
+          model.logLikelihood(documents)
+        }
+
+        def logPerplexity(documents: RDD[(Long, Vector)]): Double = {
+          model.logPerplexity(documents)
+        }
+
+        def topicDistributions(documents: RDD[(Long, Vector)]): RDD[(Long, Vector)] = {
+          model.topicDistributions(documents)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val state = ldaOptimizer.initialize(documents, this)
     var iter = 0
     val iterationTimes = Array.ofDim[Double](maxIterations)

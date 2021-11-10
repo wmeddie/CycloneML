@@ -17,13 +17,16 @@
 
 package org.apache.spark.mllib.tree
 
+import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.feature.Instance
 import org.apache.spark.ml.tree.impl.{GradientBoostedTrees => NewGBT}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.tree.configuration.BoostingStrategy
+import org.apache.spark.mllib.tree.model.DecisionTreeModel
 import org.apache.spark.mllib.tree.model.GradientBoostedTreesModel
 import org.apache.spark.rdd.RDD
 
@@ -66,6 +69,40 @@ class GradientBoostedTrees private[spark] (
    */
   @Since("1.2.0")
   def run(input: RDD[LabeledPoint]): GradientBoostedTreesModel = {
+    try {
+      val model = new com.nec.frovedis.mllib.tree.GradientBoostedTrees(boostingStrategy)
+        .setSeed(seed).run(input)
+      val w = model.treeWeights
+
+      new GradientBoostedTreesModel(boostingStrategy.treeStrategy.algo, new Array[DecisionTreeModel](w.length), w) {
+        override def predict(features: RDD[Vector]): RDD[Double] = {
+          model.predict(features)
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def numTrees(): Int = {
+          model.numTrees
+        }
+
+        override def totalNumNodes(): Int = {
+          model.totalNumNodes
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val algo = boostingStrategy.treeStrategy.algo
     val (trees, treeWeights) = NewGBT.run(input.map {
       case LabeledPoint(label, features) =>

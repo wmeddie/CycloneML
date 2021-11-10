@@ -326,6 +326,51 @@ class LinearRegression @Since("1.3.0") (@Since("1.3.0") override val uid: String
 
   override protected def train(
       dataset: Dataset[_]): LinearRegressionModel = instrumented { instr =>
+    try {
+      val data = dataset.toDF.rdd.map(row => org.apache.spark.mllib.regression.LabeledPoint(
+        row.getAs[Double]($(labelCol)),
+        row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol))
+      ))
+      val weight = if (isDefined(weightCol) && $(weightCol).nonEmpty) {
+        dataset.toDF.rdd.map(row => row.getAs[Double]($(weightCol))).collect()
+      } else {
+        Array.empty[Double]
+      }
+      val model = com.nec.frovedis.mllib.regression.LinearRegressionWithLBFGS.train(
+        data, $(maxIter), 1.0, 10, weight)
+
+      return copyValues(new LinearRegressionModel(uid, null, 0) {
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val rdd = dataset.toDF.rdd
+          val features = rdd.map(row =>
+            mlVectorToMLlibVector(row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol))))
+          val predictions = model.predict(features)
+
+          rdd.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, ((row, _), (prediction, _))) => (
+              row.getAs[Double]($(labelCol)),
+              row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol)),
+              prediction
+            )
+          }.toDF($(labelCol), $(featuresCol), $(predictionCol))
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      })
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     instr.logPipelineStage(this)
     instr.logDataset(dataset)
     instr.logParams(this, labelCol, featuresCol, weightCol, predictionCol, solver, tol,

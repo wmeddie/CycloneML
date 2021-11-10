@@ -689,6 +689,40 @@ class ALS(@Since("1.4.0") override val uid: String) extends Estimator[ALSModel] 
 
   @Since("2.0.0")
   override def fit(dataset: Dataset[_]): ALSModel = instrumented { instr =>
+    try {
+      val ratings = dataset
+        .select(checkedCast(col($(userCol))), checkedCast(col($(itemCol))),
+          if ($(ratingCol) != "") col($(ratingCol)).cast(FloatType) else lit(1.0f))
+        .rdd.map { row =>
+          org.apache.spark.mllib.recommendation.Rating(row.getInt(0), row.getInt(1), row.getFloat(2))
+        }
+      val model = com.nec.frovedis.mllib.recommendation.ALS.trainImplicit(
+        ratings, $(rank), $(maxIter), $(regParam), $(alpha), 0.1, $(seed))
+
+      return copyValues(new ALSModel(uid, $(rank), null, null) {
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val features = dataset
+            .select(checkedCast(col($(userCol))), checkedCast(col($(itemCol))))
+            .rdd.map { row => (row.getInt(0), row.getInt(1)) }
+          val predictions = model.predict(features)
+
+          features.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, (((user, item), _), (prediction, _))) => (user, item, prediction)
+          }.toDF($(userCol), $(itemCol), $(predictionCol))
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }).setBlockSize($(blockSize)).setParent(this)
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     transformSchema(dataset.schema)
     import dataset.sparkSession.implicits._
 
