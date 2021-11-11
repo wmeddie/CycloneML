@@ -20,11 +20,13 @@ package org.apache.spark.mllib.tree
 import scala.collection.JavaConverters._
 import scala.util.Try
 
+import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.tree.{DecisionTreeModel => NewDTModel, TreeEnsembleParams => NewRFParams}
 import org.apache.spark.ml.tree.impl.{RandomForest => NewRandomForest}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.tree.configuration.Algo._
 import org.apache.spark.mllib.tree.configuration.QuantileStrategy._
@@ -91,6 +93,47 @@ private class RandomForest (
    * @return RandomForestModel that can be used for prediction.
    */
   def run(input: RDD[LabeledPoint]): RandomForestModel = {
+    try {
+      val model = strategy.algo match {
+        case Classification =>
+          com.nec.frovedis.mllib.tree.RandomForest.trainClassifier(
+            input, strategy, numTrees, featureSubsetStrategy, seed)
+        case Regression =>
+          com.nec.frovedis.mllib.tree.RandomForest.trainRegressor(
+            input, strategy, numTrees, featureSubsetStrategy, seed)
+        case _ => throw new IllegalArgumentException(strategy.algo.toString)
+      }
+
+      return new RandomForestModel(strategy.algo,
+          Array.fill[DecisionTreeModel](numTrees)(new DecisionTreeModel(null, strategy.algo))) {
+        override def predict(features: RDD[Vector]): RDD[Double] = {
+          model.predict(features)
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def numTrees(): Int = {
+          model.numTrees
+        }
+
+        override def totalNumNodes(): Int = {
+          model.totalNumNodes
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val treeStrategy = strategy.copy
     if (numTrees == 1) {
       treeStrategy.bootstrap = false

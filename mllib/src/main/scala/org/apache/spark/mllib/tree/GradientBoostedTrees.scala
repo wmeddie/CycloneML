@@ -74,7 +74,7 @@ class GradientBoostedTrees private[spark] (
         .setSeed(seed).run(input)
       val w = model.treeWeights
 
-      new GradientBoostedTreesModel(boostingStrategy.treeStrategy.algo, new Array[DecisionTreeModel](w.length), w) {
+      return new GradientBoostedTreesModel(boostingStrategy.treeStrategy.algo, new Array[DecisionTreeModel](w.length), w) {
         override def predict(features: RDD[Vector]): RDD[Double] = {
           model.predict(features)
         }

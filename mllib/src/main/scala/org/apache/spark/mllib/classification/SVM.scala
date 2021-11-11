@@ -19,7 +19,9 @@ package org.apache.spark.mllib.classification
 
 import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
+import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.classification.impl.GLMClassificationModel
+import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.optimization._
 import org.apache.spark.mllib.pmml.PMMLExportable
@@ -162,7 +164,7 @@ class SVMWithSGD private (
  * @note Labels used in SVM should be {0, 1}.
  */
 @Since("0.8.0")
-object SVMWithSGD {
+object SVMWithSGD extends Logging {
 
   /**
    * Train a SVM model given an RDD of (label, features) pairs. We run a fixed number
@@ -188,8 +190,47 @@ object SVMWithSGD {
       regParam: Double,
       miniBatchFraction: Double,
       initialWeights: Vector): SVMModel = {
-    new SVMWithSGD(stepSize, numIterations, regParam, miniBatchFraction)
-      .run(input, initialWeights)
+    try {
+      val model = com.nec.frovedis.mllib.classification.SVMWithSGD
+        .train(input, numIterations, stepSize, regParam, miniBatchFraction, initialWeights.toArray)
+
+      return new SVMModel(null, 0) {
+        override def setThreshold(threshold: Double): this.type = {
+          model.setThreshold(threshold)
+          this
+        }
+
+        override def getThreshold: Option[Double] = {
+          if (model.getThreshold == com.nec.frovedis.matrix.ENUM.NONE) None else Option(model.getThreshold)
+        }
+
+        override def clearThreshold(): this.type = {
+          model.clearThreshold
+          this
+        }
+
+        override def predict(testData: RDD[Vector]): RDD[Double] = {
+          model.predict(testData)
+        }
+
+        override def predict(testData: Vector): Double = {
+          model.predict(testData)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
+    val svm = new SVMWithSGD(stepSize, numIterations, regParam, miniBatchFraction)
+    if (initialWeights.size > 0) svm.run(input, initialWeights) else svm.run(input)
   }
 
   /**
@@ -212,7 +253,7 @@ object SVMWithSGD {
       stepSize: Double,
       regParam: Double,
       miniBatchFraction: Double): SVMModel = {
-    new SVMWithSGD(stepSize, numIterations, regParam, miniBatchFraction).run(input)
+    train(input, numIterations, stepSize, regParam, miniBatchFraction, new DenseVector(Array[Double]()))
   }
 
   /**

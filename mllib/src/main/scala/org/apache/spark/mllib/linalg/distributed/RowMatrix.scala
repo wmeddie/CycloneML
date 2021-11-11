@@ -289,6 +289,13 @@ class RowMatrix @Since("1.0.0") (
       k: Int,
       computeU: Boolean = false,
       rCond: Double = 1e-9): SingularValueDecomposition[RowMatrix, Matrix] = {
+    try {
+      val model = com.nec.frovedis.matrix.RowMatrixUtils.computeSVD(this, k)
+      return model.to_spark_result(rows.context)
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     // maximum number of Arnoldi update iterations for invoking ARPACK
     val maxIter = math.max(300, k * 3)
     // numerical tolerance for invoking ARPACK
@@ -464,6 +471,14 @@ class RowMatrix @Since("1.0.0") (
    */
   @Since("1.6.0")
   def computePrincipalComponentsAndExplainedVariance(k: Int): (Matrix, Vector) = {
+    try {
+      val model = com.nec.frovedis.matrix.RowMatrixUtils
+        .computePrincipalComponentsAndExplainedVariance(this, k)
+      return model.to_spark_result
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val n = numCols().toInt
     require(k > 0 && k <= n, s"k = $k out of range (0, n = $n]")
 
