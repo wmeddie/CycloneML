@@ -209,6 +209,20 @@ class FPGrowth private[spark] (
    */
   @Since("1.3.0")
   def run[Item: ClassTag](data: RDD[Array[Item]]): FPGrowthModel[Item] = {
+    try {
+      val model = new com.nec.frovedis.mllib.fpm.FPGrowth()
+          .setMinSupport(minSupport)
+          .setNumPartitions(numPartitions)
+//          .setTreeDepth(treeDepth)
+//          .setCompressionPoint(compressionPoint)
+//          .setMemOptLevel(memOptLevel)
+          .run(data.asInstanceOf[RDD[Array[Int]]])
+
+      return model.to_spark_model(data.context).asInstanceOf[FPGrowthModel[Item]]
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     if (data.getStorageLevel == StorageLevel.NONE) {
       logWarning("Input data is not cached.")
     }

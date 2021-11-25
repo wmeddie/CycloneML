@@ -19,9 +19,11 @@ package org.apache.spark.mllib.tree
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.internal.Logging
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.tree.configuration.Algo._
 import org.apache.spark.mllib.tree.configuration.QuantileStrategy._
@@ -62,6 +64,35 @@ class DecisionTree private[spark] (private val strategy: Strategy, private val s
    */
   @Since("1.2.0")
   def run(input: RDD[LabeledPoint]): DecisionTreeModel = {
+    try {
+      strategy.quantileCalculationStrategy = ApproxHist
+      val model = new com.nec.frovedis.mllib.tree.DecisionTree(strategy).setSeed(seed).run(input)
+
+      return new DecisionTreeModel(null, strategy.algo) {
+        override def predict(features: RDD[Vector]): RDD[Double] = {
+          model.predict(features)
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+
+        override def toDebugString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val rf = new RandomForest(strategy, numTrees = 1, featureSubsetStrategy = "all", seed = seed)
     val rfModel = rf.run(input)
     rfModel.trees(0)

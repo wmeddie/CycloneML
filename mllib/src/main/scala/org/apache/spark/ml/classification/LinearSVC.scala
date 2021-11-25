@@ -23,6 +23,7 @@ import breeze.linalg.{DenseVector => BDV}
 import breeze.optimize.{CachedDiffFunction, OWLQN => BreezeOWLQN}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkContext
 import org.apache.spark.SparkException
 import org.apache.spark.annotation.Since
 import org.apache.spark.internal.Logging
@@ -35,6 +36,7 @@ import org.apache.spark.ml.param.shared._
 import org.apache.spark.ml.stat._
 import org.apache.spark.ml.util._
 import org.apache.spark.ml.util.Instrumentation.instrumented
+import org.apache.spark.mllib.linalg.VectorImplicits._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
@@ -169,6 +171,64 @@ class LinearSVC @Since("2.2.0") (
   override def copy(extra: ParamMap): LinearSVC = defaultCopy(extra)
 
   override protected def train(dataset: Dataset[_]): LinearSVCModel = instrumented { instr =>
+    try {
+      val data = dataset.toDF.rdd.map(row => org.apache.spark.mllib.regression.LabeledPoint(
+        row.getAs[Double]($(labelCol)),
+        row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol))
+      ))
+      val weight = if (isDefined(weightCol) && $(weightCol).nonEmpty) {
+        dataset.toDF.rdd.map(row => row.getAs[Double]($(weightCol))).collect()
+      } else {
+        Array.empty[Double]
+      }
+      val model = com.nec.frovedis.mllib.classification.SVMWithLBFGS
+        .train(data, $(maxIter), 1.0, $(regParam), 10, weight)
+
+      return copyValues(new LinearSVCModel(uid, new DenseVector(new Array[Double](data.first.features.size)), 0) {
+        override def setThreshold(threshold: Double): this.type = {
+          model.setThreshold(threshold)
+          this
+        }
+
+        override def getThreshold: Double = {
+          model.getThreshold
+        }
+
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val rdd = dataset.toDF.rdd
+          val features = rdd.map(row =>
+            mlVectorToMLlibVector(row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol))))
+          val predictions = model.predict(features)
+
+          rdd.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, ((row, _), (prediction, _))) => (
+              row.getAs[Double]($(labelCol)),
+              row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol)),
+              prediction
+            )
+          }.toDF($(labelCol), $(featuresCol), $(predictionCol))
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def save(path: String): Unit = {
+          model.save(path)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      })
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     instr.logPipelineStage(this)
     instr.logDataset(dataset)
     instr.logParams(this, labelCol, weightCol, featuresCol, predictionCol, rawPredictionCol,

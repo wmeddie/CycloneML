@@ -308,6 +308,29 @@ class Word2Vec extends Serializable with Logging {
    */
   @Since("1.1.0")
   def fit[S <: Iterable[String]](dataset: RDD[S]): Word2VecModel = {
+    try {
+      val model = new com.nec.frovedis.mllib.feature.Word2Vec()
+        .setMaxSentenceLength(maxSentenceLength)
+        .setVectorSize(vectorSize)
+        .setLearningRate(learningRate)
+        .setNumPartitions(numPartitions)
+        .setNumIterations(numIterations)
+        .setSeed(seed)
+        .setWindowSize(window)
+        .setMinCount(minCount)
+//        .setThreshold(threshold)
+//        .setNegative(negative)
+//        .setModelSyncPeriod(modelSyncPeriod)
+//        .setMinSyncWords(minSyncWords)
+//        .setFullSyncTimes(fullSyncTimes)
+//        .setMessageSize(messageSize)
+//        .setNumThreads(numThreads)
+        .fit(dataset.map(_.toArray))
+
+      return model.to_spark_model(dataset.context)
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
 
     learnVocab(dataset)
 

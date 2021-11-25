@@ -26,6 +26,7 @@ import org.apache.spark.annotation.Since
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.graphx._
 import org.apache.spark.internal.Logging
+import org.apache.spark.mllib.linalg.{DenseVector, Vector}
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.util.{Loader, MLUtils, Saveable}
 import org.apache.spark.rdd.RDD
@@ -118,7 +119,7 @@ object PowerIterationClusteringModel extends Loader[PowerIterationClusteringMode
 class PowerIterationClustering private[clustering] (
     private var k: Int,
     private var maxIterations: Int,
-    private var initMode: String) extends Serializable {
+    private var initMode: String) extends Serializable with Logging {
 
   import org.apache.spark.mllib.clustering.PowerIterationClustering._
 
@@ -202,6 +203,31 @@ class PowerIterationClustering private[clustering] (
    */
   @Since("1.3.0")
   def run(similarities: RDD[(Long, Long, Double)]): PowerIterationClusteringModel = {
+    try {
+      val data = similarities.map {
+        case (i, j, s) => new DenseVector(Array[Double](i, j, s)).asInstanceOf[Vector]
+      }
+      val model = new com.nec.frovedis.mllib.clustering.SpectralClustering()
+        .setNumCluster(k)
+        .setNumIteration(maxIterations)
+        .run(data)
+      val assignments = similarities.context.parallelize(model.labels).zipWithIndex.map {
+        case (label, i) => PowerIterationClustering.Assignment(i, label)
+      }
+
+      return new PowerIterationClusteringModel(k, assignments) {
+        override def save(sc: SparkContext, path: String): Unit = {
+          model.save(path)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      }
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
+
     val w = normalize(similarities)
     val w0 = initMode match {
       case "random" => randomInit(w)

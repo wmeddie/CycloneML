@@ -19,11 +19,13 @@ package org.apache.spark.mllib.regression
 
 import org.apache.spark.SparkContext
 import org.apache.spark.annotation.Since
+import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.optimization._
 import org.apache.spark.mllib.pmml.PMMLExportable
 import org.apache.spark.mllib.regression.impl.GLMRegressionModel
 import org.apache.spark.mllib.util.{Loader, Saveable}
+import org.apache.spark.rdd.RDD
 
 /**
  * Regression model trained using Lasso.
@@ -100,5 +102,28 @@ class LassoWithSGD private[mllib] (
 
   override protected def createModel(weights: Vector, intercept: Double) = {
     new LassoModel(weights, intercept)
+  }
+  override def run(input: RDD[LabeledPoint], initialWeights: Vector):
+      LassoModel = {
+    val model = com.nec.frovedis.mllib.regression.LassoWithSGD.train(input,
+        numIterations, stepSize, regParam, miniBatchFraction, initialWeights.toArray)
+
+    return new LassoModel(new DenseVector(Array[Double]()), 0) {
+      override def predict(testData: RDD[Vector]): RDD[Double] = {
+        model.predict(testData)
+      }
+
+      override def predict(testData: Vector): Double = {
+        model.predict(testData)
+      }
+
+      override def save(sc: SparkContext, path: String): Unit = {
+        model.save(path)
+      }
+
+      override def toString: String = {
+        model.toString
+      }
+    }
   }
 }

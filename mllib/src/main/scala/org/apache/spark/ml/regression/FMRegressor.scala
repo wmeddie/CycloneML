@@ -37,9 +37,10 @@ import org.apache.spark.mllib.{linalg => OldLinalg}
 import org.apache.spark.mllib.linalg.{Vector => OldVector, Vectors => OldVectors}
 import org.apache.spark.mllib.linalg.VectorImplicits._
 import org.apache.spark.mllib.optimization.{Gradient, GradientDescent, SquaredL2Updater, Updater}
+import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Dataset, Row}
+import org.apache.spark.sql.{DataFrame, Dataset, Row}
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -406,6 +407,58 @@ class FMRegressor @Since("3.0.0") (
   override protected def train(
       dataset: Dataset[_]
     ): FMRegressionModel = instrumented { instr =>
+
+    try {
+      val data = dataset.select($(labelCol), $(featuresCol)).rdd.map {
+        case Row(label: Double, features: Vector) =>
+          LabeledPoint(label, OldVectors.fromML(features).toSparse)
+      }
+      val model = new com.nec.frovedis.mllib.fm.FactorizationMachine()
+          .setInitStd($(initStd))
+          .setMaxIter($(maxIter))
+          .setStepSize($(stepSize))
+//          .setOptimizer($(solver))
+          .setIsRegression(true)
+          .setFitIntercept($(fitIntercept))
+          .setFitLinear($(fitLinear))
+          .setFactorSize($(factorSize))
+          .setRegParam(($(regParam), $(regParam), $(regParam)))
+          .setMiniBatchFraction($(miniBatchFraction))
+          .setSeed(Math.abs($(seed).toInt))
+          .run(data)
+
+      return copyValues(new FMRegressionModel(uid, 0, new DenseVector(Array[Double]()), Matrices.zeros(0, 0)) {
+        override def transform(dataset: Dataset[_]): DataFrame = {
+          val spark = dataset.sparkSession
+
+          import spark.implicits._
+
+          val rdd = dataset.toDF.rdd
+          val features = rdd.map(row =>
+            mlVectorToMLlibVector(row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol)))
+              .toSparse.asInstanceOf[org.apache.spark.mllib.linalg.Vector])
+          val predictions = model.predict(features)
+
+          rdd.zipWithIndex.keyBy(_._2).join(predictions.zipWithIndex.keyBy(_._2)).map {
+            case (key, ((row, _), (prediction, _))) => (
+              row.getAs[Double]($(labelCol)),
+              row.getAs[org.apache.spark.ml.linalg.Vector]($(featuresCol)),
+              prediction
+            )
+          }.toDF($(labelCol), $(featuresCol), $(predictionCol))
+        }
+
+        override def predict(features: Vector): Double = {
+          model.predict(features)
+        }
+
+        override def toString: String = {
+          model.toString
+        }
+      })
+    } catch {
+      case e: Exception => logWarning("Parameters unsupported by Frovedis, falling back to vanilla MLlib.", e)
+    }
 
     instr.logPipelineStage(this)
     instr.logDataset(dataset)
