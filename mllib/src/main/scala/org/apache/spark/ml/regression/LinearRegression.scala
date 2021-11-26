@@ -29,6 +29,7 @@ import org.apache.spark.annotation.Since
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.{PipelineStage, PredictorParams}
 import org.apache.spark.ml.feature._
+import org.apache.spark.ml.linalg.DenseVector
 import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.linalg.BLAS._
 import org.apache.spark.ml.optim.WeightedLeastSquares
@@ -339,7 +340,8 @@ class LinearRegression @Since("1.3.0") (@Since("1.3.0") override val uid: String
       val model = com.nec.frovedis.mllib.regression.LinearRegressionWithLBFGS.train(
         data, $(maxIter), 1.0, 10, weight)
 
-      return copyValues(new LinearRegressionModel(uid, null, 0) {
+      return copyValues(new LinearRegressionModel(uid,
+          new DenseVector(new Array[Double](MetadataUtils.getNumFeatures(dataset, $(featuresCol)))), 0) {
         override def transform(dataset: Dataset[_]): DataFrame = {
           val spark = dataset.sparkSession
 
